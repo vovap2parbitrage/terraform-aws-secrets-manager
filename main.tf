@@ -1,0 +1,136 @@
+resource "aws_vpc" "main_vpc" {
+  cidr_block = var.vpc_cidr
+
+  tags = {
+    Name = "main-vpc"
+  }
+}
+
+resource "aws_subnet" "public_subnet" {
+  vpc_id                  = aws_vpc.main_vpc.id
+  cidr_block              = var.subnet_cidr
+  map_public_ip_on_launch = true
+
+  tags = {
+    Name = "public-subnet"
+  }
+}
+
+resource "aws_internet_gateway" "main_igw" {
+  vpc_id = aws_vpc.main_vpc.id
+
+  tags = {
+    Name = "main-igw"
+  }
+}
+
+resource "aws_route_table" "public_rt" {
+  vpc_id = aws_vpc.main_vpc.id
+
+  route {
+    cidr_block = "0.0.0.0/0"
+    gateway_id = aws_internet_gateway.main_igw.id
+  }
+
+  tags = {
+    Name = "public-rt"
+  }
+}
+
+resource "aws_route_table_association" "public_assoc" {
+  subnet_id      = aws_subnet.public_subnet.id
+  route_table_id = aws_route_table.public_rt.id
+}
+
+resource "aws_security_group" "public_sg" {
+  name        = "allow_ssh"
+  description = "Allow SSH connection from the specific Public IP"
+  vpc_id      = aws_vpc.main_vpc.id
+
+  tags = {
+    Name = "public-sg"
+  }
+}
+
+resource "aws_vpc_security_group_ingress_rule" "allow_ssh" {
+  security_group_id = aws_security_group.public_sg.id
+  cidr_ipv4         = var.principal_public_ip
+  from_port         = 22
+  ip_protocol       = "tcp"
+  to_port           = 22
+}
+
+resource "aws_vpc_security_group_egress_rule" "default_egress_rule" {
+  security_group_id = aws_security_group.public_sg.id
+  cidr_ipv4         = "0.0.0.0/0"
+  ip_protocol       = "-1"
+}
+
+resource "aws_security_group" "vpce_sg" {
+  name        = "secrets_manager_vpce_sg"
+  description = "Allow TLS inbound from the VPC to the Secrets Manager Endpoint"
+  vpc_id      = aws_vpc.main_vpc.id
+}
+
+resource "aws_vpc_security_group_ingress_rule" "allow_tls" {
+  security_group_id = aws_security_group.vpce_sg.id
+  from_port         = 443
+  to_port           = 443
+  ip_protocol       = "tcp"
+  cidr_ipv4         = aws_vpc.main_vpc.cidr_block
+}
+
+resource "aws_vpc_endpoint" "main_vpc_endpoint" {
+  vpc_id       = aws_vpc.main_vpc.id
+  service_name = "com.amazonaws.${var.aws_region}.secretsmanager"
+
+  vpc_endpoint_type = "Interface"
+
+  subnet_ids          = [aws_subnet.public_subnet.id]
+  security_group_ids  = [aws_security_group.vpce_sg.id]
+  private_dns_enabled = true
+}
+
+data "aws_iam_policy_document" "ec2_trust_policy" {
+  statement {
+    sid     = "AllowEC2ToAssumeRole"
+    effect  = "Allow"
+    actions = ["sts:AssumeRole"]
+
+    principals {
+      type        = "Service"
+      identifiers = ["ec2.amazonzws.com"]
+    }
+  }
+}
+
+resource "aws_iam_role" "ec2_secrets_role" {
+  name               = "ec2-secrets-access-role"
+  assume_role_policy = data.aws_iam_policy_document.ec2_trust_policy.json
+}
+
+data "aws_ami" "ubuntu" {
+  most_recent = true
+  owners      = ["099720109477"]
+
+  filter {
+    name   = "name"
+    values = ["ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-*"]
+  }
+}
+
+resource "aws_key_pair" "def_key" {
+  key_name = "def-key"
+
+  public_key = file("~/.ssh/def-key.pub")
+}
+
+resource "aws_instance" "public_instance" {
+  ami                    = data.aws_ami.ubuntu.id
+  instance_type          = var.instance_type
+  subnet_id              = aws_subnet.public_subnet.id
+  vpc_security_group_ids = [aws_security_group.public_sg.id]
+  key_name               = aws_key_pair.def_key.key_name
+
+  user_data = file("${path.module}/scripts/userdata.sh")
+}
