@@ -91,6 +91,26 @@ resource "aws_vpc_endpoint" "main_vpc_endpoint" {
   private_dns_enabled = true
 }
 
+resource "aws_kms_key" "app_key" {
+  description = "Custom KMS key for encrypting app secrets"
+  deletion_window_in_days = 7
+  enable_key_rotation = true
+}
+
+resource "aws_secretsmanager_secret" "app_secret" {
+  name = var.secret_name
+  description = "Application database credentials"
+  kms_key_id = aws_kms_key.app_key.arn
+}
+
+resource "aws_secretsmanager_secret_version" "app_secret_val" {
+  secret_id = aws_secretsmanager_secret.app_secret.id
+  secret_string = jsonencode({
+    username = "admin"
+    password = "admin"
+  })
+}
+
 data "aws_iam_policy_document" "ec2_trust_policy" {
   statement {
     sid     = "AllowEC2ToAssumeRole"
@@ -99,14 +119,54 @@ data "aws_iam_policy_document" "ec2_trust_policy" {
 
     principals {
       type        = "Service"
-      identifiers = ["ec2.amazonzws.com"]
+      identifiers = ["ec2.amazonaws.com"]
     }
   }
 }
 
 resource "aws_iam_role" "ec2_secrets_role" {
-  name               = "ec2-secrets-access-role"
+  name = "ec2-secrets-access-role"
   assume_role_policy = data.aws_iam_policy_document.ec2_trust_policy.json
+}
+
+data "aws_iam_policy_document" "secrets_permission_doc" {
+  statement {
+    sid = "AllowSecretsManagerRead"
+    effect = "Allow"
+
+    actions = [
+      "secretsmanager:GetSecretValue",
+      "secretsmanager:DescribeSecret"
+    ]
+
+    resources = ["*"]
+  }
+  statement {
+    sid = "AllowKMSDecrypt"
+    effect = "Allow"
+
+    actions = [
+      "kms:Decrypt"
+    ]
+
+    resources = ["*"]
+  }
+}
+
+resource "aws_iam_policy" "secrets_policy" {
+  name = "ec2-secrets-access-policy"
+  description = "Allow reading secrets from Secrets Manager and decrypting via KMS"
+  policy = data.aws_iam_policy_document.secrets_permission_doc.json
+}
+
+resource "aws_iam_role_policy_attachment" "attach_secrets_policy" {
+  role       = aws_iam_role.ec2_secrets_role.name
+  policy_arn = aws_iam_policy.secrets_policy.arn
+}
+
+resource "aws_iam_instance_profile" "ec2_profile" {
+  name = "ec2-secrets-instance-profile"
+  role = aws_iam_role.ec2_secrets_role.name
 }
 
 data "aws_ami" "ubuntu" {
@@ -131,6 +191,8 @@ resource "aws_instance" "public_instance" {
   subnet_id              = aws_subnet.public_subnet.id
   vpc_security_group_ids = [aws_security_group.public_sg.id]
   key_name               = aws_key_pair.def_key.key_name
+
+  iam_instance_profile = aws_iam_instance_profile.ec2_profile.name
 
   user_data = file("${path.module}/scripts/userdata.sh")
 }
