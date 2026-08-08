@@ -27,3 +27,13 @@ variable "secret_name" {
   description = "The name of the secrets in Secret Manager"
   type        = string
 }
+
+variable "user_name" {
+  description = "The user's name"
+  type        = string
+}
+
+variable "user_password" {
+  description = "The user's password"
+  type = string
+}

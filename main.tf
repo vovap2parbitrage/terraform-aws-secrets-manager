@@ -106,8 +106,8 @@ resource "aws_secretsmanager_secret" "app_secret" {
 resource "aws_secretsmanager_secret_version" "app_secret_val" {
   secret_id = aws_secretsmanager_secret.app_secret.id
   secret_string = jsonencode({
-    username = "admin"
-    password = "admin"
+    username = "${var.user_name}"
+    password = "${var.user_password}"
   })
 }
 
