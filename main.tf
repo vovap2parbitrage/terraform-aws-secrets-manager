@@ -1,6 +1,9 @@
 resource "aws_vpc" "main_vpc" {
   cidr_block = var.vpc_cidr
 
+  enable_dns_support = true
+  enable_dns_hostnames = true
+
   tags = {
     Name = "main-vpc"
   }
@@ -139,7 +142,7 @@ data "aws_iam_policy_document" "secrets_permission_doc" {
       "secretsmanager:DescribeSecret"
     ]
 
-    resources = ["*"]
+    resources = [aws_secretsmanager_secret.app_secret.arn]
   }
   statement {
     sid = "AllowKMSDecrypt"
@@ -149,7 +152,7 @@ data "aws_iam_policy_document" "secrets_permission_doc" {
       "kms:Decrypt"
     ]
 
-    resources = ["*"]
+    resources = [aws_kms_key.app_key.arn]
   }
 }
 
