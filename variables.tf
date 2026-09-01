@@ -35,5 +35,5 @@ variable "user_name" {
 
 variable "user_password" {
   description = "The user's password"
-  type = string
+  type        = string
 }
